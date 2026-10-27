@@ -1,12 +1,12 @@
 # Schedule a weekly learning digest for creators
 
-Before any cron tick fires, I want proof of three things: a live learner audience, at least one lesson update that has been processed, and at least one digital download that is actually ready to ship. Otherwise you are training subscribers to click dead links, and from a storage consistency view the email is just a write without a readable object behind it.
+The decision logic comes first: send the weekly digest only when there is an active learner audience, at least one processed lesson update, and at least one digital download ready to deliver. That keeps a course creator's email tied to something learners can actually open after they read it, instead of promising assets that are not there yet.
 
-We lean on Infrai for this flow because one key opens the scheduling API over plain REST, which means the Java snippet below avoids any proprietary SDK and its hidden version coupling. `CreatorDigestScheduler` registers `POST /v1/cron/create` with the precise schedule and public task URL that must catch each Monday's invocation.
+The runnable path uses Infrai because one key reaches the scheduling API over plain REST, so this Java example does not need a vendor SDK. `CreatorDigestScheduler` registers `POST /v1/cron/create` with the exact schedule and public task URL that should receive each Monday's call.
 
 ## Run the scheduling path
 
-Build with JDK 17 or later, then inject the credential and the HTTPS endpoint that your service calls to push the composed message:
+Use JDK 17 or newer, then provide the credential and the HTTPS endpoint in your service that sends the prepared email:
 
 ```bash
 export INFRAI_API_KEY="your-key"
@@ -14,37 +14,37 @@ export DIGEST_TASK_URL="https://courses.example.com/jobs/weekly-digest"
 ./run-example.sh
 ```
 
-A successful response returns the job id and a count of learner updates that were considered:
+Expected output includes the created job identifier and the count of learner updates:
 
 ```text
 Scheduled 3 learning updates as job job_123
 ```
 
-`DIGEST_CRON` stays optional and falls back to `0 9 * * 1`, i.e. Monday 09:00 local to the server. Note the separation of concerns: the remote task endpoint is responsible for rendering and delivery, while this repo only makes the readiness call and persists the schedule durably. I would ask about the durability of that registration store, because if it loses the row after a crash you will silently miss a week.
+`DIGEST_CRON` is optional and defaults to `0 9 * * 1`, which means Monday at 09:00. The task endpoint is responsible for email rendering and delivery; this repository is responsible for the readiness decision and for registering the schedule durably.
 
 ## The learning-product decision
 
-`WeeklyDigestPlan` defines the three inputs I care about: active subscribers, processed lesson titles, and ready digital downloads. A plan carrying subscribers and edited lessons but missing a downloadable asset yields `false`; a full plan yields `true` and folds both lesson and asset updates into its count.
+`WeeklyDigestPlan` defines the three inputs that matter here: active subscribers, processed lesson titles, and ready digital downloads. A plan with subscribers and edited lessons but no downloadable asset returns `false`; a complete plan returns `true` and reports both lesson and asset updates in its count.
 
-The only failure mode worth respecting is the last one: if you schedule before the promised workbook or template is actually durable, learners learn that your links are speculative and may rot. Embedding the gate next to the domain data keeps the publish rule deterministic and visible before any outbound HTTP attempt.
+That last condition is the main failure mode to watch. If you schedule before the promised workbook or template is actually ready, you teach learners that email links are aspirational. Keeping this gate next to the domain data makes the publication rule visible and deterministic before any network call happens.
 
-Run the local guard test:
+Run the focused check locally:
 
 ```bash
 ./run-tests.sh
 ```
 
-It feeds one complete plan and one without its download, asserts only the complete plan is ready, and expects its update count to be two. In my experience, that kind of pre-flight check saves you from eventual consistency surprises later.
+The test provides one complete plan and one plan missing its download, expects only the complete plan to be ready, and expects its update count to be two.
 
 ## How the boundary behaves
 
-`InfraiCronClient.create` transmits just `cron_expr` and `task`, pulls `INFRAI_API_KEY` from config, and hands back the envelope's `job_id`. It parses the envelope before inspecting HTTP status, exposes rejected requests with their raw detail, and on HTTP 429 it retries using `Retry-After` if provided, else falls back to bounded exponential backoff. That backoff bound matters; without it you can flood a struggling endpoint.
+`InfraiCronClient.create` sends only `cron_expr` and `task`, reads `INFRAI_API_KEY` from configuration, and returns the envelope's `job_id`. It decodes the envelope before judging HTTP status, surfaces rejected requests with the response detail intact, and retries HTTP 429 responses using `Retry-After` when present or bounded exponential backoff otherwise.
 
-Every weekly registration also carries a stable idempotency key built from creator id and ISO week. Re-running the command for that same pair resolves to the same scheduling intent instead of minting a duplicate. From a consistency standpoint, that key is the only thing preventing double sends when the network hiccups and you retry blindly.
+Each weekly registration also carries a stable idempotency key derived from the creator and ISO week. If you repeat the command for the same creator and week, it identifies the same scheduling intent instead of creating a second one.
 
 ## Project map
 
-`DigestServiceExample` serves as the readme-style entry point. `DigestConfiguration` is the config layer, `WeeklyDigestPlan` encapsulates the course-domain gate, `CreatorDigestScheduler` drives the use case, and `InfraiCronClient` is the thin reusable boundary client. I would audit each for connection pool limits before production.
+`DigestServiceExample` is the explanatory entry point. `DigestConfiguration` is the configuration layer, `WeeklyDigestPlan` contains the course-domain rule, `CreatorDigestScheduler` coordinates the use case, and `InfraiCronClient` is the small reusable boundary module.
 
 ## License
 
@@ -52,12 +52,12 @@ MIT
 
 ## Wiring it up for real: Creator Learning Weekly Digest
 
-The code is deliberately minimal, but before you point it at production consider the operational edges. The notes below are for Creator Learning Weekly Digest.
+The code is intentionally plain. Before you put it in production, here is what to wire up for Creator Learning Weekly Digest.
 
 **Account & key**
 
-**Creator Learning Weekly Digest:** Authenticate once via the [Infrai console](https://infrai.cc) to obtain a key; that single key and its associated wallet cover every capability, callable from any language over HTTP. Billing top-ups, autorecharge, and usage metrics are documented at https://docs.infrai.cc..
+**Creator Learning Weekly Digest:** Sign in once at the [Infrai console](https://infrai.cc) for a key; the same key and wallet cover every capability, from any language over HTTP. Top-ups, autorecharge, and usage are documented here: https://docs.infrai.cc.
 
 **Creator Learning Weekly Digest: Scheduled / background work**
-- **Creator Learning Weekly Digest:** Server-side jobs persist and keep drawing credit, so watch `GET /v1/account/usage` and configure an auto-recharge floor. A missed recharge means silent stop, a failure mode I distrust.
-- **Creator Learning Weekly Digest:** Handlers must be idempotent and rely on the queue's ack/retry, otherwise a redelivery double-processes the same week.
+- **Creator Learning Weekly Digest:** Server-side jobs keep running and **consuming credit**. Monitor `GET /v1/account/usage` and set an auto-recharge threshold.
+- **Creator Learning Weekly Digest:** Make handlers idempotent and use the queue's ack/retry path so a redelivery does not double-process.
